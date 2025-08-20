@@ -48,3 +48,4 @@ if uploaded_file is not None:
         st.success(f"📝 Nội dung: {transcript}")
     else:
         st.error("⚠️ Lỗi khi nhận diện: " + str(result))
+Fix Deepgram audio upload & report generator
