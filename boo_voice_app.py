@@ -3,26 +3,15 @@ import streamlit as st
 import pandas as pd
 import re
 from deepgram import Deepgram
-from pydub import AudioSegment
 
 # ===================== CONFIG =====================
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY") or st.secrets["DEEPGRAM_API_KEY"]
 dg_client = Deepgram(DEEPGRAM_API_KEY)
 
 st.set_page_config(page_title="Boo Voice Logistics Assistant", page_icon="🎤", layout="centered")
-
 st.title("🎤 Boo Voice Logistics Assistant")
 
 # ===================== UTILS =====================
-def ensure_wav(file_path):
-    """Convert audio sang wav để Deepgram đọc được"""
-    if not file_path.endswith(".wav"):
-        sound = AudioSegment.from_file(file_path)
-        wav_path = file_path.rsplit(".", 1)[0] + ".wav"
-        sound.export(wav_path, format="wav")
-        return wav_path
-    return file_path
-
 def normalize_command(text: str) -> str:
     """Chuẩn hóa câu lệnh tiếng Việt"""
     text = text.lower()
@@ -76,16 +65,26 @@ def generate_cost_report(data_file, month):
 
 def generate_container_report(data_file, cont_size):
     df = pd.read_excel(data_file, engine="openpyxl")
-    result = df.groupby("KhachHang")[f"SL_{cont_size}"].sum().reset_index()
+    col = f"SL_{cont_size}"
+    if col not in df.columns:
+        st.warning(f"⚠️ File Excel chưa có cột {col}")
+        return pd.DataFrame()
+    result = df.groupby("KhachHang")[col].sum().reset_index()
     return result
 
 def generate_lcl_report(data_file):
     df = pd.read_excel(data_file, engine="openpyxl")
+    if "SL_LCL" not in df.columns:
+        st.warning("⚠️ File Excel chưa có cột SL_LCL")
+        return pd.DataFrame()
     result = df.groupby("KhachHang")["SL_LCL"].sum().reset_index()
     return result
 
 def generate_summary_report(data_file):
     df = pd.read_excel(data_file, engine="openpyxl")
+    if not {"DoanhThu","ChiPhi"}.issubset(df.columns):
+        st.warning("⚠️ File Excel chưa có cột DoanhThu hoặc ChiPhi")
+        return pd.DataFrame()
     result = df.groupby("KhachHang")[["DoanhThu", "ChiPhi"]].sum().reset_index()
     result["LoiNhuan"] = result["DoanhThu"] - result["ChiPhi"]
     return result
@@ -112,8 +111,8 @@ def handle_command(command, data_file):
     return pd.DataFrame({"Thông báo": ["⚠️ Chưa hiểu lệnh, vui lòng thử lại."]})
 
 # ===================== UI =====================
-uploaded_audio = st.file_uploader("Upload file ghi âm (MP3, WAV, M4A)", type=["mp3", "wav", "m4a"])
-uploaded_excel = st.file_uploader("Upload file Excel dữ liệu", type=["xlsx"])
+uploaded_audio = st.file_uploader("🎤 Upload file ghi âm (.wav)", type=["wav"])
+uploaded_excel = st.file_uploader("📊 Upload file Excel dữ liệu", type=["xlsx"])
 
 if uploaded_audio and uploaded_excel:
     # Lưu file audio tạm
@@ -121,8 +120,10 @@ if uploaded_audio and uploaded_excel:
     with open(audio_path, "wb") as f:
         f.write(uploaded_audio.getbuffer())
 
-    # Convert sang wav
-    audio_path = ensure_wav(audio_path)
+    # Bắt buộc WAV
+    if not audio_path.endswith(".wav"):
+        st.error("⚠️ Chỉ hỗ trợ file WAV. Vui lòng convert file ghi âm trước khi upload.")
+        st.stop()
 
     # Phát lại audio
     st.audio(audio_path)
