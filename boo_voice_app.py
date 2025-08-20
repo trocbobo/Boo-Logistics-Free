@@ -10,7 +10,7 @@ import requests
 # =====================
 # Cấu hình mặc định
 # =====================
-DEFAULT_DATA_FILE = "data/OTM_MASTER_DATA.xlsx"
+DEFAULT_DATA_FILE = "OTM_MASTER_DATA.xlsx"
 DEEPGRAM_API_KEY = st.secrets.get("DEEPGRAM_API_KEY", "")
 
 # =====================
