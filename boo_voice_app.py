@@ -1,57 +1,87 @@
 import streamlit as st
 import pandas as pd
+import requests
+import mimetypes
 import os
-from datetime import datetime
-from deepgram import Deepgram
-import asyncio
-import aiofiles
 
-# API Key Deepgram
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+url = "https://api.deepgram.com/v1/listen"
 
-# Hàm nhận diện giọng nói bằng Deepgram
-async def transcribe_audio(file_path):
-    dg_client = Deepgram(DEEPGRAM_API_KEY)
-    mimetype = "audio/m4a" if file_path.endswith(".m4a") else "audio/wav"
-    async with aiofiles.open(file_path, "rb") as audio:
-        source = {"buffer": await audio.read(), "mimetype": mimetype}
-        response = await dg_client.transcription.prerecorded(source, {"smart_format": True, "language": "vi"})
-        return response["results"]["channels"][0]["alternatives"][0]["transcript"]
+# --- Nhận diện giọng nói ---
+def transcribe_audio(file_path):
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        mime_type = "audio/mpeg"
 
-# Hàm tạo báo cáo chi phí
-def generate_cost_report(data_file, month):
+    headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}", "Content-Type": mime_type}
+    params = {"model": "nova-2", "language": "vi"}
+
+    with open(file_path, "rb") as f:
+        response = requests.post(url, headers=headers, params=params, data=f)
+
+    return response.json()
+
+# --- Báo cáo doanh thu (bản đơn giản) ---
+def generate_revenue_simple(data_file, month):
     df = pd.read_excel(data_file)
+    df["Tháng"] = pd.to_datetime(df["Ngày"], errors="coerce").dt.month
+    report = df[df["Tháng"] == month].groupby("Khách hàng")["Tổng VND"].sum().reset_index()
+    out = f"Bao_cao_doanh_thu_T{month}_simple.xlsx"
+    report.to_excel(out, index=False)
+    return out
 
-    # Lọc dữ liệu theo tháng
-    df["Tháng"] = pd.to_datetime(df["Ngày"]).dt.month
-    report = df[df["Tháng"] == month]
+# --- Báo cáo doanh thu (bản nâng cấp theo mẫu anh gửi) ---
+def generate_revenue_detailed(data_file, month):
+    df = pd.read_excel(data_file)
+    df["Tháng"] = pd.to_datetime(df["Ngày"], errors="coerce").dt.month
+    df_month = df[df["Tháng"] == month]
 
-    # Xuất ra Excel
-    output_file = f"bao_cao_T{month}.xlsx"
-    report.to_excel(output_file, index=False)
-    return output_file
+    # Gom theo khách hàng + loại cont
+    report = df_month.groupby(["Khách hàng", "Loại cont"]).agg({
+        "Số lượng": "sum",
+        "Tổng VND": "sum",
+        "TỔNG (VC+PS)": "sum"
+    }).reset_index()
 
-# Giao diện Streamlit
-st.title("📊 Trợ lý Boo - Báo cáo Logistics bằng giọng nói")
+    # Xuất ra Excel với nhiều sheet
+    out = f"Bao_cao_doanh_thu_T{month}_detailed.xlsx"
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        report.to_excel(writer, sheet_name="Chi tiết theo cont", index=False)
+        df_month.groupby("Khách hàng")["Tổng VND"].sum().reset_index().to_excel(writer, sheet_name="Tổng hợp KH", index=False)
 
-uploaded_file = st.file_uploader("Tải file dữ liệu (Excel)", type=["xlsx"])
-uploaded_audio = st.file_uploader("🎤 Gửi file ghi âm lệnh", type=["mp3", "wav", "m4a"])
+    return out
 
-if uploaded_audio is not None:
+# --- Xử lý transcript ---
+def handle_command(transcript, data_file):
+    transcript = transcript.lower()
+    if "doanh thu" in transcript and "tháng sáu" in transcript:
+        simple = generate_revenue_simple(data_file, 6)
+        detailed = generate_revenue_detailed(data_file, 6)
+        return [simple, detailed]
+    return []
+
+# --- Giao diện Streamlit ---
+st.title("🎤 Boo Voice Logistics Assistant")
+
+uploaded_audio = st.file_uploader("Upload file ghi âm (MP3, WAV, M4A)", type=["mp3", "wav", "m4a"])
+uploaded_excel = st.file_uploader("Upload file Excel dữ liệu", type=["xlsx"])
+
+if uploaded_audio and uploaded_excel:
     file_path = os.path.join("/tmp", uploaded_audio.name)
     with open(file_path, "wb") as f:
         f.write(uploaded_audio.getbuffer())
-    
     st.audio(file_path)
 
     st.write("⏳ Đang nhận diện giọng nói...")
-    transcript = asyncio.run(transcribe_audio(file_path))
-    st.success(f"📌 Nội dung: {transcript}")
+    result = transcribe_audio(file_path)
 
-    if "báo cáo doanh thu tháng sáu" in transcript.lower():
-        if uploaded_file is not None:
-            output = generate_cost_report(uploaded_file, 6)
-            st.success("✅ Báo cáo đã tạo xong!")
-            with open(output, "rb") as f:
-                st.download_button("⬇️ Tải báo cáo Excel", f, file_name=output)
-a
+    if "results" in result:
+        transcript = result["results"]["channels"][0]["alternatives"][0]["transcript"]
+        st.success(f"📝 Nội dung: {transcript}")
+
+        reports = handle_command(transcript, uploaded_excel)
+        for r in reports:
+            with open(r, "rb") as f:
+                st.download_button(f"⬇️ Tải {r}", f, file_name=r)
+    else:
+        st.error("⚠️ Không nhận diện được giọng nói.")
