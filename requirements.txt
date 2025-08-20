@@ -4,3 +4,5 @@ openpyxl
 requests
 deepgram-sdk
 aiofiles
+deepgram-sdk
+pydub
